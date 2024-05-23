@@ -7,7 +7,7 @@ from pprint import pprint
 from datetime import datetime
 
 # Set up your EDGAR identity in your environment
-os.environ['EDGAR_IDENTITY'] = "Your Name your.email@example.com"  
+os.environ['EDGAR_IDENTITY'] = "Your Name your.email@example.com"
 
 def store_in_mongo(cik, name, data):
     mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
@@ -35,6 +35,19 @@ def convert_xml_to_json(xml_data):
     json_data = xmltodict.parse(xml_data)
     return json_data
 
+def combine_duplicates(info_table):
+    combined = {}
+    for item in info_table:
+        key = (item['nameOfIssuer'], item['cusip'], item['shrsOrPrnAmt']['sshPrnamtType'])
+        if key in combined:
+            combined[key]['value'] += int(item['value'])
+            combined[key]['shrsOrPrnAmt']['sshPrnamt'] += int(item['shrsOrPrnAmt']['sshPrnamt'])
+        else:
+            combined[key] = item
+            combined[key]['value'] = int(item['value'])
+            combined[key]['shrsOrPrnAmt']['sshPrnamt'] = int(item['shrsOrPrnAmt']['sshPrnamt'])
+    return list(combined.values())
+
 def fetch_and_store_13f_filings(cik, name):
     # Fetch filings using the Company object and specifying the form type
     company = Company(cik)
@@ -44,6 +57,11 @@ def fetch_and_store_13f_filings(cik, name):
     json_data = convert_xml_to_json(thirteenf.infotable_xml)
     json_data['accession_number'] = filing.accession_number
     json_data['filing_date'] = str(filing.filing_date)  # Convert date to string
+
+    # Combine duplicate entries in the info table
+    combined_info_table = combine_duplicates(json_data['informationTable']['infoTable'])
+    json_data['informationTable']['infoTable'] = combined_info_table
+
     store_in_mongo(cik, name, json_data)
 
 def retrieve_13f_data(cik, start_date, end_date):
@@ -51,7 +69,7 @@ def retrieve_13f_data(cik, start_date, end_date):
     client = MongoClient(mongo_url)
     db = client.sec_filings
     collection = db.filings_13f
-    
+
     query = {
         "cik": cik,
         "filing_date": {
@@ -59,7 +77,7 @@ def retrieve_13f_data(cik, start_date, end_date):
             "$lte": datetime.strptime(end_date, '%Y-%m-%d')
         }
     }
-    
+
     results = collection.find(query)
     return list(results)
 
@@ -136,7 +154,6 @@ def main():
         '102909': "Vangaurd Group Inc",
         '0001364742': 'BlackRock',
         '0000093751': 'State Street',
-        '0000895421': 'Morgan Stanley',
         '00019617': 'JPMorgan Chase & Co.',
         '0001423053': 'Geode Capital Management',
         '0000070858': 'Bank of America',
